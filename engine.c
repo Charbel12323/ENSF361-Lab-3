@@ -23,25 +23,39 @@ int read_line(int infile, char *buffer, int maxlen) {
     return readlen;
 }
 
-void parse_command(char *buffer, char **command, int *numtokens) {
+void parse_command(char *buffer, char **command, int *numtokens, char **outfile) {
     int inside_quotes = 0;  
     char *start = buffer;   
-    *numtokens = 0;         
-    
+    *numtokens = 0;
+    *outfile = NULL; // Initialize outfile to NULL to check if redirection is required
+
     while (*buffer) {
-        if (*buffer == '\"') {  
+        if (*buffer == '>') {  // Handle output redirection
+            *buffer = '\0';  // Terminate the previous token (if any)
+            buffer++;
+            while (*buffer == ' ') buffer++;  // Skip any spaces after `>`
+            *outfile = buffer;  // Output file name starts here
+            while (*buffer && *buffer != ' ' && *buffer != '\n') buffer++;  // Find end of file name
+            *buffer = '\0';  // Terminate the output file name
+            buffer++;  // Move past '\0'
+            start = buffer;  // Update start to current buffer position
+            break;
+        }
+        if (*buffer == '"') {  
             inside_quotes = !inside_quotes;  
             if (inside_quotes) {
                 start = buffer + 1;  
             } else {
                 *buffer = '\0';  
-                command[(*numtokens)++] = start;  
+                if (start != buffer) {
+                    command[(*numtokens)++] = start;  // Store token only if not empty
+                }
                 start = buffer + 1;  
             }
         } else if ((*buffer == ' ' || *buffer == '\n') && !inside_quotes) {
             if (start != buffer) {  
                 *buffer = '\0';     
-                command[(*numtokens)++] = start;  // Store token
+                command[(*numtokens)++] = start;  // Store token only if not empty
             }
             start = buffer + 1;  // Move to the next token
         }
@@ -55,15 +69,22 @@ void parse_command(char *buffer, char **command, int *numtokens) {
     command[*numtokens] = NULL;  // Null-terminate the array
 }
 
-
-void execute_command(char **command) {
-   
-
+void execute_command(char **command, char *outfile) {
     pid_t pid = fork();  
-    if (pid == 0) {
+    if (pid == 0) {  // Child process
+        if (outfile != NULL) {  // If output redirection is required
+            int fd = open(outfile, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+            if (fd < 0) {
+                perror("Error opening output file");
+                exit(1);
+            }
+            // Redirect stdout to the file
+            dup2(fd, STDOUT_FILENO);
+            close(fd);
+        }
         if (command[0][0] == '/') {
             // Absolute path
-            execv(command[0], command);  d
+            execv(command[0], command);
             perror("Error executing command");  // If execv fails
             exit(1);
         } else if (strchr(command[0], '/') != NULL) {
@@ -98,6 +119,7 @@ int main(int argc, char *argv[]) {
 
     char buffer[1024];
     char *command[64];  
+    char *outfile;
     int readlen;
 
     while (1) {
@@ -111,11 +133,11 @@ int main(int argc, char *argv[]) {
         }
 
         int numtokens = 0;
-        parse_command(buffer, command, &numtokens);
+        parse_command(buffer, command, &numtokens, &outfile);
 
         // Execute the tokenized command
         if (numtokens > 0) {
-            execute_command(command);
+            execute_command(command, outfile);
         }
     }
 
